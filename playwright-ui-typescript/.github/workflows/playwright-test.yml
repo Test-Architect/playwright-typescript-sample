@@ -1,0 +1,122 @@
+name: Test execution on Github server
+on:
+  pull_request:
+    branches: [ test-run/**, main ]
+
+  workflow_dispatch:
+
+jobs:
+  test:
+    permissions:
+      contents: write
+      pull-requests: write
+      pages: write
+      id-token: write
+     
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    continue-on-error: true
+   
+
+    steps:
+    - name: checkout repo
+      uses: actions/checkout@v4
+
+    - name: setup node
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+
+    - name: Cache Node Modules
+      id: cache-node-modules
+      uses: actions/cache@v4
+      with:
+        path: |
+          node_modules
+        key: modules-${{ hashFiles('package-lock.json') }}
+    
+    - name: Cache Playwright Binaries
+      id: cache-playwright
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/ms-playwright
+        key: playwright-${{ hashFiles('package-lock.json') }}
+
+    - name: Install dependencies
+      id: install-dependencies
+      if: steps.cache-node-modules.outputs.cache-hit != 'true'
+      run: npm ci
+
+    - name: Install Playwright Browsers
+      id: install-playwright-browsers
+      if: steps.cache-playwright.outputs.cache-hit != 'true'
+      run: npx playwright install --with-deps
+
+    - name: Run Playwright tests
+      continue-on-error: true
+      run: |
+        npx playwright test
+       
+    - name: Get the failure count
+      id: tests
+      run: |
+        export count=$(cat ./playwright-report/result.txt | grep Failed | cut -d ':' -f 2 | tr -d ' ') 
+        echo "fail_count=$count" >> "$GITHUB_OUTPUT"
+        echo $count
+  
+    - uses: mshick/add-pr-comment@v2
+      if: always()
+      with:
+          message-path: |
+            ./playwright-report/result.txt
+          message-failure: |
+            Workflow failed
+
+
+    - name: Setup Pages
+      if: steps.tests.outputs.fail_count != '0'
+      uses: actions/configure-pages@v5  
+
+    - name: Upload Artifact
+      if: steps.tests.outputs.fail_count != '0'
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: "./playwright-report"
+
+    
+   
+   
+   # - name: Fail the job if there any failed case
+    #  if:  steps.tests.outputs.fail_count != '0' 
+     # run : |
+      #      exit 1
+
+    outputs:
+          fail_count: ${{ steps.tests.outputs.fail_count }}
+
+  deploy:
+    if:   needs.test.outputs.fail_count != '0'
+    
+    needs: test
+
+    permissions: 
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    runs-on: ubuntu-latest
+    steps:
+
+
+          - name: Deploy to GitHub Pages
+            id: deployment
+            uses: actions/deploy-pages@v4
+    
+  
+
+          
+

@@ -1,0 +1,69 @@
+name: Upload the image to docker hub
+on:
+    push: 
+        tags: 
+            - 'v*'
+    workflow_dispatch:
+      inputs:
+            name:
+                type: string
+                description: Enter the tag name
+                required: true
+                default: Enter value in format vx.x.x
+
+
+jobs:
+    build-and-push-image:
+        if: ${{ github.ref_type == 'tag' }}
+        runs-on: ubuntu-latest
+        steps:
+            - name: checkout repo
+              uses: actions/checkout@v4
+
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v3
+
+            - name: Get version and repo name
+              id: version-repo
+              run: |
+                 export name=$(echo ${{ github.repository }}  | cut -d '/' -f 2) 
+                 echo "repo_name=$name" >> "$GITHUB_ENV"
+                 
+                 export version=$(echo ${{ github.ref_name }}  | tr -d v)
+                 echo "version_no=$version" >> "$GITHUB_ENV"
+                 
+
+
+            - name: Docker meta
+              id: meta
+              uses: docker/metadata-action@v5
+              with:
+                images: |
+                    ${{ vars.DOCKER_USER_NAME }}/${{ env.repo_name }}
+                
+                tags: |
+                    type=ref,event=branch
+                    type=ref,event=pr
+                    type=semver,pattern={{version}}
+                    type=semver,pattern={{major}}.{{minor}}
+                    type=sha
+
+            - name: Login to Docker hub
+              uses: docker/login-action@v3
+              with:
+                    username: ${{ vars.DOCKER_USER_NAME }}
+                    password: ${{ secrets.DOCKER_PASSWORD }}
+       
+            - name: push Docker image
+              uses: docker/build-push-action@v5
+              with:
+                    context: .
+                    push: true
+                    tags: |
+                        ${{ steps.meta.outputs.tags }}
+                    labels: ${{ steps.meta.outputs.labels }}
+                    
+            - name: Check the test image builds
+              run: |
+                    docker images
+                  

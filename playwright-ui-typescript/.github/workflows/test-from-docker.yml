@@ -1,0 +1,79 @@
+name: Execute tests inside Docker container
+on:
+  push:
+    branches: [ main ]
+ 
+  workflow_dispatch:
+
+jobs:
+    container-test-job:
+        permissions:
+            contents: write
+            pull-requests: write
+        runs-on: ubuntu-latest
+        name: execute a test from a image
+        steps:        
+            - name: set up a docker environement
+              uses: docker/setup-buildx-action@v3   
+
+            - name: Login to Docker hub
+              uses: docker/login-action@v3
+              with:
+                username: ${{ vars.DOCKER_USER_NAME }}
+                password: ${{ secrets.DOCKER_PASSWORD }}
+
+            - name: pull and run the test from image
+              id: tests
+              run: |
+                docker pull ${{ vars.DOCKER_USER_NAME }}/playwright-ui-typescript:latest
+                docker run  -v ./playwright-report:/app/playwright-report \
+                      ${{ vars.DOCKER_USER_NAME }}/playwright-ui-typescript:latest \
+                      -c "npx playwright test"
+                 export count=$(cat ./playwright-report/result.txt | grep Failed | cut -d ':' -f 2 | tr -d ' ') 
+                 echo "fail_count=$count" >> "$GITHUB_OUTPUT"
+
+
+            - name: Add the test summary status back to PR comment
+              uses: mshick/add-pr-comment@v2
+              if: (contains(fromJSON('["pull_request"]'), github.event_name))
+              with:
+                message-path: |
+                        ./playwright-report/result.txt
+                message-failure: |
+                        Workflow failed
+                        
+            - name: Setup Pages
+              uses: actions/configure-pages@v3
+
+            - name: Upload Artifact for pages
+              uses: actions/upload-pages-artifact@v1
+              with:
+                    path: "./playwright-report"
+
+            - name: Fail the job if there any failed case
+              if: ${{ steps.tests.outputs.fail_count == '0' }}
+              run : |
+                  exit 1
+    
+        outputs:
+          fail_count: ${{ steps.tests.outputs.fail_count }}
+        
+    publish-reports:
+        if: ${{ contains(github.ref,'main') &&  (contains(fromJSON('[ "push"]'), github.event_name)) && needs.test.outputs.fail_count != '0' }}
+        needs: [ container-test-job ]
+        runs-on: ubuntu-latest
+        permissions: 
+            pages: write
+            id-token: write
+        environment:
+            name: github-pages
+            url: ${{ steps.deployment.outputs.page_url }}
+
+        steps:
+            - name: Deploy to GitHub Pages
+              id: deployment
+              uses: actions/deploy-pages@v2
+            
+       
+        
+
